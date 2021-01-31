@@ -1,65 +1,113 @@
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
+from selenium.common.exceptions import StaleElementReferenceException
+from time import sleep
 from pytube import YouTube
 import moviepy.editor as mp
-import re
 import os
+import re
 
 
-# function to download the audio of the youtube video
-def download(video):
-    YouTube(video).streams.filter(only_audio=True).first().download(output_path="D:\music from AYS\python downloaded")
+def download(song, path):
+    YouTube(song).streams.filter(only_audio=True).first().download(output_path=path)
 
 
+folder = r'D:\music from AYS\python downloaded'
 
+# read files to mark the channels and the owned tracks
+with open("Channels", "r") as ch_file:
+    channels = ch_file.readlines()
 
-# start the driver and go to wegz channel
-driver = webdriver.Chrome()
-driver.get("https://www.youtube.com/channel/UC9gXps6xggAzxjjzquNXIaQ")
+is_any_new = False
+driver = webdriver.Chrome()  # init the chrome driver
+for channel in channels:  # loop over the channels
+    driver.get(channel)
+    singer = driver.find_element_by_class_name('ytd-channel-name').text
+    print(singer)
+    tgt_folder = folder + '\\' + singer
+    if not os.path.exists(tgt_folder):
+        os.mkdir(tgt_folder)
+    driver.find_element_by_xpath('//*[@id="tabsContent"]/paper-tab[2]/div').click()
+    sleep(1)
 
+    for i in range(100):   # proceed to the bottom of the page
+        driver.find_element_by_tag_name("html").send_keys(Keys.END)
 
-# click on the videos tap
-videos_tap = driver.find_element_by_xpath('//*[@id="tabsContent"]/paper-tab[2]/div')
-videos_tap.click()
+    videos = driver.find_elements_by_id('video-title')
+    is_there_new_video = False
+    for video in videos:  # downloading new videos
+        attempts = 0
+        while attempts <= 2:
+            try:
+                song_link = video.get_attribute("href")
+                song_name = video.get_attribute("title")
+            except StaleElementReferenceException:
+                sleep(2)
+                attempts += 1
+            else:
+                try:
+                    with open(f'.\\singers\\{singer}\\{singer}.txt', 'a+') as f:
+                        f.seek(0)
+                        tracks = f.read().splitlines()
+                    if song_link not in tracks:
+                        print(f'downloading {song_name} from {song_link}')
+                        download(song_link, tgt_folder)
+                        is_there_new_video = True
+                        with open(f'.\\singers\\{singer}\\{singer}.txt', 'a') as f:
+                            f.write(song_link+'\n')
 
+                        # convert to mp3
+                        temp = []
+                        for x in song_name:
+                            if x in ['|', '.', ':']:
+                                continue
+                            else:
+                                temp.append(x)
+                        name = ''.join(temp)
+                        full_path = os.path.join(tgt_folder, name + '.mp4')
+                        output_path = os.path.join(tgt_folder, name + '.mp3')
+                        try:
+                            clip = mp.AudioFileClip(full_path).subclip(
+                                10, )  # disable if do not want any clipping
+                            clip.write_audiofile(output_path)
 
-# scroll down and making sure you're in bottom
-i = 0
-while i < 100:
-    scroll = driver.find_element_by_tag_name('body').send_keys(Keys.END)
-    i += 1
+                            # delete the mp4 file
+                            if os.path.isfile(full_path) and os.path.isfile(output_path):
+                                os.remove(full_path)
 
-# determine if there is a new video
-owned = open("owned tracks names.txt", "a+")
-owned.seek(0)
-owned_titles = owned.readlines()
-videos_names = driver.find_elements_by_id("video-title")
-new = []
+                        except OSError:
+                            print("error while trying to convert to mp3")
+                    else:
+                        print(f'song: {song_name} was downloaded before')
+                except FileNotFoundError:
+                    pass
+                break
 
-for video in videos_names:
-    if video.text + "\n" in owned_titles:
-        continue
-    else:
-        new.append(video)
+    if is_there_new_video:
+        is_any_new = True
+        # make sure that all files are converted
+        mp4_names = os.listdir(tgt_folder)
+        for name in mp4_names:  # create audio files from the videos
+            if re.search('mp4', name):
+                full_path = os.path.join(tgt_folder, name)
+                output_path = os.path.join(
+                    tgt_folder, os.path.splitext(name)[0] + '.mp3')
+                clip = mp.AudioFileClip(full_path).subclip(
+                    10, )  # disable if do not want any clipping
+                clip.write_audiofile(output_path)
 
+        # make sure that all videos are deleted
+        files = [x[:-3] for x in os.listdir(tgt_folder)]
+        for file in files:
+            if files.count(file) > 1:
+                try:
+                    os.remove(tgt_folder + '\\' + file + 'mp4')
+                except FileNotFoundError:
+                    pass
 
-# loop over the new videos, download them and create the mp4 list
-for song in new:
-    link = song.get_attribute('href')
-    download(link)
-    owned.write(song.text + "\n")
+driver.quit()
 
-
-
-owned.close()
-
-# convert the mp4 files to mp3
-tgt_folder = 'D:\music from AYS\python downloaded'
-for file in [n for n in os.listdir(tgt_folder) if re.search('mp4', n)]:
-    full_path = os.path.join(tgt_folder, file)
-    output_path = os.path.join(tgt_folder, os.path.splitext(file)[0] + '.mp3')
-    clip = mp.AudioFileClip(full_path).subclip(10, )  # disable if do not want any clipping
-    clip.write_audiofile(output_path)
-
-driver.close()
-
+if is_any_new:
+    print('there are some new songs to listen to')
+else:
+    print('there is no new songs to listen to')
